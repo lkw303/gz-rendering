@@ -27,8 +27,17 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations")
 configure_file (example_config.hh.in ${PROJECT_BINARY_DIR}/example_config.hh)
 
 add_executable(particles_demo Main.cc GlutWindow.cc)
+add_executable(rain_demo Rain.cc GlutWindow.cc)
 
 target_link_libraries(particles_demo
+  ${GLUT_LIBRARIES}
+  ${OPENGL_LIBRARIES}
+  ${GLEW_LIBRARIES}
+  ${IGNITION-COMMON_LIBRARIES}
+  ${IGNITION-RENDERING_LIBRARIES}
+)
+
+target_link_libraries(rain_demo
   ${GLUT_LIBRARIES}
   ${OPENGL_LIBRARIES}
   ${GLEW_LIBRARIES}
@@ -40,3 +49,9 @@ add_custom_command(TARGET particles_demo POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
   ${CMAKE_SOURCE_DIR}/media
   $<TARGET_FILE_DIR:particles_demo>/media)
+
+add_custom_command(TARGET rain_demo POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+  ${CMAKE_SOURCE_DIR}/media
+  $<TARGET_FILE_DIR:particles_demo>/media)
+

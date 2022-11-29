@@ -26,6 +26,7 @@
 
 #include <iostream>
 #include <vector>
+#include <tuple>
 
 #include <ignition/common/Console.hh>
 #include <ignition/common/MeshManager.hh>
@@ -98,6 +99,22 @@ void buildScene(ScenePtr _scene)
   root->AddChild(camera);
   //! [create camera]
 
+  //! [create depth camera]
+  DepthCameraPtr depthCamera =_scene->CreateDepthCamera("depth_camera");
+  depthCamera->SetLocalPosition(-5.0, -5.0, 3);
+  depthCamera->SetLocalRotation(0.0, 0.0, 1.0);
+  depthCamera->SetImageWidth(800);
+  depthCamera->SetImageHeight(600);
+  depthCamera->SetAspectRatio(1.333);
+  depthCamera->SetHFOV(IGN_PI / 2);
+  depthCamera->SetImageFormat(PixelFormat::PF_FLOAT32_RGBA);
+  depthCamera->SetNearClipPlane(0.15);
+  depthCamera->SetFarClipPlane(10.0);
+  depthCamera->SetAntiAliasing(2);
+  depthCamera->CreateDepthTexture();
+  root->AddChild(depthCamera);
+  //! [create depth camera]
+
   // create particle material
   MaterialPtr rainMaterial = _scene->CreateMaterial();
   rainMaterial->SetDiffuse(0.7, 0.7, 0.7);
@@ -109,10 +126,39 @@ void buildScene(ScenePtr _scene)
   smokeMaterial->SetTexture(RESOURCE_PATH + "/smoke.png");
   smokeMaterial->SetAlphaFromTexture(true);
 
+  // Rain from a grid of points
+  std::vector<ParticleEmitterPtr> gridParticleVec;
+  int width = 3;
+  int length = 3;
+  double interval = 3.0;
+  double height = 15.0;
+
+  for (int i = 0; i < width; i++) {
+    for (int j = 0; j < length; j++) {
+        // Rain from a point
+        ParticleEmitterPtr emitter = _scene->CreateParticleEmitter();
+        emitter->SetType(EM_POINT);
+        emitter->SetLocalPose({i*interval, j*interval, height, 0.0, 3.14/2, 0.0});
+        emitter->SetRate(10);
+        emitter->SetParticleSize({1, 1, 1});
+        emitter->SetLifetime(2);
+        emitter->SetVelocityRange(10, 20);
+        emitter->SetMaterial(rainMaterial);
+        emitter->SetColorRangeImage(RESOURCE_PATH + "/smokecolors.png");
+        emitter->SetParticleScatterRatio(0.0);
+
+        emitter->SetScaleRate(10);
+        emitter->SetEmitting(true);
+        root->AddChild(emitter);
+        gridParticleVec.push_back(emitter);
+    }
+  }
   //! [create particle emitter]
+  // Rain from a point
+  /*
   ParticleEmitterPtr emitter = _scene->CreateParticleEmitter();
   emitter->SetType(EM_POINT);
-  emitter->SetLocalPose({2, 1.10, 7.0, 0.0, 3.14/2, 0.0});
+  emitter->SetLocalPose({0, 0, 7.0, 0.0, 3.14/2, 0.0});
   emitter->SetRate(10);
   emitter->SetParticleSize({1, 1, 1});
   emitter->SetLifetime(2);
@@ -122,26 +168,27 @@ void buildScene(ScenePtr _scene)
   emitter->SetScaleRate(10);
   emitter->SetEmitting(true);
   root->AddChild(emitter);
-  //! [create particle emitter]
+  */
 
   // area emitter
-  ParticleEmitterPtr areaEmitter = _scene->CreateParticleEmitter();
-  areaEmitter->SetType(EM_BOX);
-  areaEmitter->SetEmitterSize({3.0, 3.0, 3.0});
-  areaEmitter->SetLocalPose({3, 0, 0, 0, -1.5707, 0});
-  areaEmitter->SetRate(10);
-  areaEmitter->SetParticleSize({0.01, 0.01, 0.01});
-  areaEmitter->SetLifetime(1);
-  areaEmitter->SetVelocityRange(0.5, 1);
-  areaEmitter->SetMaterial(smokeMaterial);
-  areaEmitter->SetColorRangeImage(RESOURCE_PATH + "/smokecolors.png");
-  areaEmitter->SetScaleRate(1);
-  areaEmitter->SetEmitting(true);
-  root->AddChild(areaEmitter);
+  // rain from an area
+//   ParticleEmitterPtr areaEmitter = _scene->CreateParticleEmitter();
+//   areaEmitter->SetType(EM_BOX);
+//   areaEmitter->SetEmitterSize({3.0, 3.0, 3.0});
+//   areaEmitter->SetLocalPose({5, 5, 7, 0, 3.14/2, 0});
+//   areaEmitter->SetRate(10);
+//   areaEmitter->SetParticleSize({2, 2, 2});
+//   areaEmitter->SetLifetime(2);
+//   areaEmitter->SetVelocityRange(10, 20);
+//   areaEmitter->SetMaterial(rainMaterial);
+//   areaEmitter->SetColorRangeImage(RESOURCE_PATH + "/smokecolors.png");
+//   areaEmitter->SetScaleRate(5);
+//   areaEmitter->SetEmitting(true);
+//   root->AddChild(areaEmitter);
 }
 
 //////////////////////////////////////////////////
-CameraPtr createCamera(const std::string &_engineName,
+std::tuple<CameraPtr, CameraPtr> createCameras(const std::string &_engineName,
     const std::map<std::string, std::string>& _params)
 {
   // create and populate scene
@@ -150,14 +197,20 @@ CameraPtr createCamera(const std::string &_engineName,
   {
     ignwarn << "Engine '" << _engineName
             << "' is not supported" << std::endl;
-    return CameraPtr();
+    return std::make_tuple(CameraPtr(), CameraPtr());
   }
   ScenePtr scene = engine->CreateScene("scene");
   buildScene(scene);
 
   // return camera sensor
   SensorPtr sensor = scene->SensorByName("camera");
-  return std::dynamic_pointer_cast<Camera>(sensor);
+  SensorPtr depth_sensor = scene->SensorByName("depth_camera");
+
+  std::tuple<CameraPtr, CameraPtr> sensors
+    = std::make_tuple(std::dynamic_pointer_cast<Camera>(sensor),
+    std::dynamic_pointer_cast<Camera>(depth_sensor)
+  );
+  return sensors;
 }
 
 //////////////////////////////////////////////////
@@ -196,10 +249,19 @@ int main(int _argc, char** _argv)
         params["metal"] = "1";
       }
 
-      CameraPtr camera = createCamera(engineName, params);
+      auto _cameras = createCameras(engineName, params);
+      auto camera = std::get<0>(_cameras);
+      auto depth_camera = std::get<1>(_cameras);
       if (camera)
       {
         cameras.push_back(camera);
+        std::cout << "Added RGB Camera" << std::endl;
+      }
+
+      if (depth_camera)
+      {
+        cameras.push_back(depth_camera);
+        std::cout << "Added Depth Camera" << std::endl;
       }
     }
     catch (...)

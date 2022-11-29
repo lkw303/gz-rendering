@@ -34,9 +34,11 @@
 #include <ignition/common/Console.hh>
 #include <ignition/rendering/Camera.hh>
 #include <ignition/rendering/Image.hh>
+#include <ignition/rendering/OrbitViewController.hh>
 #include <ignition/rendering/RayQuery.hh>
 #include <ignition/rendering/Scene.hh>
-#include <ignition/rendering/OrbitViewController.hh>
+#include <ignition/rendering/SegmentationCamera.hh>
+#include <ignition/rendering/DepthCamera.hh>
 
 #include "GlutWindow.hh"
 
@@ -47,11 +49,17 @@
 unsigned int imgw = 0;
 unsigned int imgh = 0;
 
+unsigned int t_imgw = 0;
+unsigned int t_imgh = 0;
+
 std::vector<ir::CameraPtr> g_cameras;
 ir::CameraPtr g_camera;
+ir::CameraPtr t_camera;
 ir::CameraPtr g_currCamera;
 unsigned int g_cameraIndex = 0;
 ir::ImagePtr g_image;
+ir::ImagePtr t_image;
+ignition::common::ConnectionPtr g_connection;
 
 bool g_initContext = false;
 
@@ -72,6 +80,47 @@ bool g_initContext = false;
 ir::RayQueryPtr g_rayQuery;
 ir::OrbitViewController g_viewControl;
 ir::RayQueryResult g_target;
+
+//////////////////////////////////////////////////
+// From ign-sensors/src/DepthCameraSensor.cc
+//! [convert depth to image]
+void ConvertDepthToImage(
+    const float *_data,
+    unsigned char *_imageBuffer,
+    unsigned int _width, unsigned int _height)
+{
+  float maxDepth = 0;
+  for (unsigned int i = 0; i < _height * _width; ++i)
+  {
+    if (_data[i] > maxDepth && !std::isinf(_data[i]))
+    {
+      maxDepth = _data[i];
+    }
+  }
+  double factor = 255 / maxDepth;
+  for (unsigned int j = 0; j < _height * _width; ++j)
+  {
+    unsigned char d = static_cast<unsigned char>(255 - (_data[j] * factor));
+    _imageBuffer[j * 3] = d;
+    _imageBuffer[j * 3 + 1] = d;
+    _imageBuffer[j * 3 + 2] = d;
+  }
+}
+//! [convert depth to image]
+
+//////////////////////////////////////////////////
+// See ign-sensors/src/DepthCameraSensor.cc
+//! [depth frame callback]
+void OnNewDepthFrame(const float *_scan,
+                     unsigned int _width, unsigned int _height,
+                     unsigned int /*_channels*/,
+                     const std::string &/*_format*/)
+{
+  unsigned char *data = t_image->Data<unsigned char>();
+  ConvertDepthToImage(_scan, data, _width, _height);
+}
+//! [depth frame callback]
+
 struct mouseButton
 {
   int button = 0;
@@ -237,8 +286,14 @@ void displayCB()
   }
 #endif
 
-  g_cameras[g_cameraIndex]->Capture(*g_image);
-  handleMouse();
+  if (g_cameraIndex == 1) {
+    g_cameras[g_cameraIndex]->Update();
+  }
+
+  else {
+      g_cameras[g_cameraIndex]->Capture(*g_image);
+      handleMouse();
+  }
 
 #if __APPLE__
   CGLSetCurrentContext(g_glutContext);
@@ -246,14 +301,27 @@ void displayCB()
 #else
   glXMakeCurrent(g_glutDisplay, g_glutDrawable, g_glutContext);
 #endif
+  unsigned char *data;
+  unsigned int _imgw;
+  unsigned int _imgh;
+  if (g_cameraIndex == 1) {
+    data = t_image->Data<unsigned char>();
+    _imgh = t_imgh;
+    _imgw = t_imgw;
 
-  unsigned char *data = g_image->Data<unsigned char>();
+  } else {
+    data = g_image->Data<unsigned char>();
+    _imgh = imgh;
+    _imgw = imgw;
+
+  }
 
   glClearColor(0.5, 0.5, 0.5, 1);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   glPixelZoom(1, -1);
   glRasterPos2f(-1, 1);
-  glDrawPixels(imgw, imgh, GL_RGB, GL_UNSIGNED_BYTE, data);
+
+  glDrawPixels(_imgw, _imgh, GL_RGB, GL_UNSIGNED_BYTE, data);
 
   glutSwapBuffers();
 }
@@ -288,13 +356,31 @@ void initCamera(ir::CameraPtr _camera)
   g_camera->Capture(*g_image);
 }
 
+void initThermalCamera(ir::CameraPtr _camera)
+{
+  t_camera = _camera;
+  t_imgw = t_camera->ImageWidth();
+  t_imgh = t_camera->ImageHeight();
+  ir::Image image = t_camera->CreateImage();
+  t_image = std::make_shared<ir::Image>(image);
+  ir::DepthCameraPtr camera = std::dynamic_pointer_cast<ir::DepthCamera>(
+      t_camera);
+  // callback when new thermal frame is received.
+  g_connection = camera->ConnectNewDepthFrame(
+      std::bind(OnNewDepthFrame,
+        std::placeholders::_1, std::placeholders::_2, std::placeholders::_3,
+        std::placeholders::_4, std::placeholders::_5));
+  t_camera->Update();
+}
+
+
 //////////////////////////////////////////////////
-void initContext()
+void initContext(const std::string& window_name)
 {
   glutInitDisplayMode(GLUT_DOUBLE);
   glutInitWindowPosition(0, 0);
   glutInitWindowSize(imgw, imgh);
-  glutCreateWindow("Particle Demo");
+  glutCreateWindow(window_name.c_str());
   glutDisplayFunc(displayCB);
   glutIdleFunc(idleCB);
   glutKeyboardFunc(keyboardCB);
@@ -320,6 +406,7 @@ void run(std::vector<ir::CameraPtr> _cameras)
     ignerr << "No cameras found. Scene will not be rendered" << std::endl;
     return;
   }
+  std::cout << "Camera vector length: " << _cameras.size() << std::endl;
 
 #if __APPLE__
   g_context = CGLGetCurrentContext();
@@ -330,10 +417,20 @@ void run(std::vector<ir::CameraPtr> _cameras)
   g_drawable = glXGetCurrentDrawable();
 #endif
 
+
   g_cameras = _cameras;
+  std::vector<std::string> window_names = {"camera", "depth camera"};
   initCamera(_cameras[0]);
-  initContext();
+  initThermalCamera(_cameras[1]);
+  initContext(window_names[0]);
   printUsage();
+
+  // for (int i = 0; i < _cameras.size(); i++){
+  //   // initCamera(_cameras[i]);
+  //   initContext(window_names[i]);
+  //   printUsage();
+  // }
+
 
 #if __APPLE__
   g_glutContext = CGLGetCurrentContext();
