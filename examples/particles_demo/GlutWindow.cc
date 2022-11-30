@@ -288,12 +288,10 @@ void displayCB()
 
   if (g_cameraIndex == 1) {
     g_cameras[g_cameraIndex]->Update();
-  }
-
-  else {
+  } else {
       g_cameras[g_cameraIndex]->Capture(*g_image);
-      handleMouse();
   }
+  handleMouse();
 
 #if __APPLE__
   CGLSetCurrentContext(g_glutContext);

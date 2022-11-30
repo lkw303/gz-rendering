@@ -5,3 +5,9 @@ build_*
 # OS generated files
 .DS_Store
 *.swp
+
+# Vscode files
+*.vscode
+
+# log files
+log/*
